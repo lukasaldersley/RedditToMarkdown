@@ -4,6 +4,7 @@ var output = '';
 var style = 0;
 var escapeNewLine = false;
 var spaceComment = false;
+var postLoadAdditionalComments = false
 
 const onDocumentReady = () => {
   document.getElementById('url-field').value = getQueryParamUrl();
@@ -13,7 +14,7 @@ const onDocumentReady = () => {
 };
 
 const getQueryParamUrl = () => new URLSearchParams(window.location.search).get(
-    'url') ?? null;
+  'url') ?? null;
 const getFieldUrl = () => document.getElementById('url-field').value;
 
 function fetchData(url) {
@@ -29,7 +30,7 @@ function fetchData(url) {
     const comments = data[1].data.children;
     displayTitle(post);
     output += '\n\n## Comments\n\n';
-    comments.forEach(displayComment);
+    comments.forEach((comment) => displayComment(comment, null));
 
     console.log('Done');
     var ouput_display = document.getElementById('ouput-display');
@@ -38,6 +39,20 @@ function fetchData(url) {
     ouput_display.innerHTML = output;
     download(output, 'output.md', 'text/plain');
   };
+}
+
+function loadMoreComments(url, parentid, depthInd) {
+  const h2 = new XMLHttpRequest()
+  //to allow the newly loaded comments to appear in the correct place, this call has to be synchronous
+  h2.open('GET', `${url}/${parentid}.json`, false);
+  //setting a desired response type is not supported for non-async calls
+  //h2.responseType = 'json';
+  h2.send();
+
+  //as a response type cannot be set, the result needs to be parsed to JSON manually.
+  const d2 = JSON.parse(h2.responseText)
+  const comments = d2[1].data.children[0].data.replies.data.children;
+  comments.forEach((comment) => displayComment(comment, depthInd));
 }
 
 function setStyle() {
@@ -58,6 +73,12 @@ function setStyle() {
   } else {
     spaceComment = false;
   }
+
+  if (document.getElementById('postLoadComments').checked) {
+    postLoadAdditionalComments = true;
+  } else {
+    postLoadAdditionalComments = false;
+  }
 }
 
 function startExport() {
@@ -75,7 +96,7 @@ function startExport() {
 function download(text, name, type) {
   var a = document.getElementById('a');
   a.removeAttribute('disabled');
-  var file = new Blob([text], {type: type});
+  var file = new Blob([text], { type: type });
   a.href = URL.createObjectURL(file);
   a.download = name;
 }
@@ -97,39 +118,46 @@ function formatComment(text) {
   }
 }
 
-function displayComment(comment, index) {
+function displayComment(comment, preexistingDepth = null) {
+  let currentDepth = preexistingDepth != null ? preexistingDepth : comment.data.depth;
+  let depthTag
   if (style == 0) {
-    depthTag = '─'.repeat(comment.data.depth);
-    if (depthTag != '') {
-      output += `├${depthTag} `;
+    if (currentDepth > 0) {
+      depthTag = `├${'─'.repeat(currentDepth)} `;
     } else {
-      output += `##### `;
+      depthTag = `##### `;
     }
   } else {
-    depthTag = '\t'.repeat(comment.data.depth);
-    if (depthTag != '') {
-      output += `${depthTag}- `;
+    if (currentDepth > 0) {
+      depthTag = `${'\t'.repeat(currentDepth)}- `;
     } else {
-      output += `- `;
+      depthTag = `- `;
     }
   }
 
   if (comment.data.body) {
     console.log(formatComment(comment.data.body));
-    output += `${formatComment(
-        comment.data.body)} ⏤ by *${comment.data.author}* (↑ ${
-        comment.data.ups
-    }/ ↓ ${comment.data.downs})\n`;
+    output += `${depthTag}${formatComment(
+      comment.data.body)} ⏤ by *${comment.data.author}* (↑ ${comment.data.ups
+      }/ ↓ ${comment.data.downs})\n`;
+  } else if (comment.kind === "more") {
+    let parentID = comment.data.parent_id.substring(3);
+    if (postLoadAdditionalComments) {
+      loadMoreComments(getFieldUrl(), parentID, currentDepth); ""
+    }
+    else {
+      output += `${depthTag}comment depth-limit (${currentDepth}) reached\n`;
+    }
   } else {
-    output += 'deleted \n';
+    output += `${depthTag}deleted\n`;
   }
 
   if (comment.data.replies) {
-    const subComment = comment.data.replies.data.children;
-    subComment.forEach(displayComment);
+    const subComments = comment.data.replies.data.children;
+    subComments.forEach((subComment) => displayComment(subComment, preexistingDepth != null ? preexistingDepth + 1 : null));
   }
 
-  if (comment.data.depth == 0 && comment.data.replies) {
+  if (currentDepth == 0 && comment.data.replies) {
     if (style == 0) {
       output += '└────\n\n';
     }
